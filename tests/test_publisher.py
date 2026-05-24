@@ -211,6 +211,261 @@ def test_create_wechat_draft_compacts_oversized_html_before_validation(monkeypat
     assert article.meta["wechat_draft_compaction"]["applied"] is True
 
 
+def test_create_wechat_draft_externalizes_inline_svg_markup_before_validation(monkeypatch):
+    import qiao_wechat.services.publisher as publisher_module
+
+    captured: dict[str, str] = {}
+    uploaded: list[str] = []
+
+    class FakeDraftClient:
+        def __init__(self, session, account):
+            self.session = session
+            self.account = account
+
+        def upload_inline_image(self, image_path: str):
+            uploaded.append(image_path)
+            return {"url": f"https://mmbiz.qpic.cn/{Path(image_path).name}"}
+
+        def add_draft(self, articles):
+            captured["content"] = articles[0]["content"]
+            return {"media_id": "draft_inline_svg_1"}
+
+    monkeypatch.setattr(publisher_module, "WeChatApiClient", FakeDraftClient)
+
+    db = _session()
+    account = WeChatAccount(
+        name="main",
+        appid="wx_test",
+        raw_secret="secret",
+        default_cover_media_id="cover_media_existing",
+    )
+    db.add(account)
+    db.flush()
+
+    svg_markup = (
+        '<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="720" viewBox="0 0 1200 720">'
+        + "<rect width='1200' height='720' fill='#ffffff'/>" * 220
+        + "</svg>"
+    )
+    article = Article(
+        account_id=account.id,
+        title="内嵌 SVG 稿件",
+        markdown="正文",
+        html=f"<section id='wemd'><p>前文</p>{svg_markup}<p>后文</p></section>",
+    )
+    db.add(article)
+    db.flush()
+
+    PublishService(db).create_wechat_draft(article.id, upload_inline_images=False)
+
+    assert article.status == ArticleStatus.draft_created
+    assert article.wx_draft_media_id == "draft_inline_svg_1"
+    assert uploaded
+    assert Path(uploaded[0]).suffix.lower() == ".png"
+    assert "<svg" not in captured["content"].lower()
+    assert "https://mmbiz.qpic.cn/" in captured["content"]
+    assert len(captured["content"]) < 20_000
+
+
+def test_create_wechat_draft_normalizes_ordered_lists_for_wechat(monkeypatch):
+    import qiao_wechat.services.publisher as publisher_module
+
+    captured: dict[str, str] = {}
+
+    class FakeDraftClient:
+        def __init__(self, session, account):
+            self.session = session
+            self.account = account
+
+        def add_draft(self, articles):
+            captured["content"] = articles[0]["content"]
+            return {"media_id": "draft_ordered_list_1"}
+
+    monkeypatch.setattr(publisher_module, "WeChatApiClient", FakeDraftClient)
+
+    db = _session()
+    account = WeChatAccount(
+        name="main",
+        appid="wx_test",
+        raw_secret="secret",
+        default_cover_media_id="cover_media_existing",
+    )
+    db.add(account)
+    db.flush()
+
+    article = Article(
+        account_id=account.id,
+        title="列表稿件",
+        markdown="正文",
+        html="<section id='wemd'><p>三件事：</p><ol><li>拆层级</li><li>分两组</li><li>混接入</li></ol></section>",
+    )
+    db.add(article)
+    db.flush()
+
+    PublishService(db).create_wechat_draft(article.id, upload_inline_images=False)
+
+    assert article.status == ArticleStatus.draft_created
+    assert article.wx_draft_media_id == "draft_ordered_list_1"
+    assert "<ol" not in captured["content"].lower()
+    assert "data-wechat-ol" not in captured["content"]
+    assert "1、" in captured["content"]
+    assert "2、" in captured["content"]
+    assert "3、" in captured["content"]
+
+
+def test_create_wechat_draft_normalizes_ordered_list_before_image_block(monkeypatch):
+    import qiao_wechat.services.publisher as publisher_module
+
+    captured: dict[str, str] = {}
+
+    class FakeDraftClient:
+        def __init__(self, session, account):
+            self.session = session
+            self.account = account
+
+        def add_draft(self, articles):
+            captured["content"] = articles[0]["content"]
+            return {"media_id": "draft_ordered_list_image_1"}
+
+    monkeypatch.setattr(publisher_module, "WeChatApiClient", FakeDraftClient)
+
+    db = _session()
+    account = WeChatAccount(
+        name="main",
+        appid="wx_test",
+        raw_secret="secret",
+        default_cover_media_id="cover_media_existing",
+    )
+    db.add(account)
+    db.flush()
+
+    article = Article(
+        account_id=account.id,
+        title="列表加图片块",
+        markdown="正文",
+        html=(
+            "<section id='wemd'><p>三件事：</p>"
+            "<ol><li>拆层级</li><li>分两组</li><li>混接入</li></ol>"
+            "<div style='margin:18px 0;'><img src='https://mmbiz.qpic.cn/demo.png' width='100%'/></div>"
+            "</section>"
+        ),
+    )
+    db.add(article)
+    db.flush()
+
+    PublishService(db).create_wechat_draft(article.id, upload_inline_images=False)
+
+    assert article.status == ArticleStatus.draft_created
+    assert article.wx_draft_media_id == "draft_ordered_list_image_1"
+    assert "<ol" not in captured["content"].lower()
+    assert captured["content"].count("1、") == 1
+    assert captured["content"].count("2、") == 1
+    assert captured["content"].count("3、") == 1
+    assert "demo.png" in captured["content"]
+
+
+def test_create_wechat_draft_normalizes_unordered_lists_for_wechat(monkeypatch):
+    import qiao_wechat.services.publisher as publisher_module
+
+    captured: dict[str, str] = {}
+
+    class FakeDraftClient:
+        def __init__(self, session, account):
+            self.session = session
+            self.account = account
+
+        def add_draft(self, articles):
+            captured["content"] = articles[0]["content"]
+            return {"media_id": "draft_unordered_list_1"}
+
+    monkeypatch.setattr(publisher_module, "WeChatApiClient", FakeDraftClient)
+
+    db = _session()
+    account = WeChatAccount(
+        name="main",
+        appid="wx_test",
+        raw_secret="secret",
+        default_cover_media_id="cover_media_existing",
+    )
+    db.add(account)
+    db.flush()
+
+    article = Article(
+        account_id=account.id,
+        title="无序列表稿件",
+        markdown="正文",
+        html=(
+            "<section id='wemd'><p>三份运行时文件：</p>"
+            "<ul><li><code>task_plan.md</code></li><li><code>findings.md</code></li><li><code>progress.md</code></li></ul>"
+            "</section>"
+        ),
+    )
+    db.add(article)
+    db.flush()
+
+    PublishService(db).create_wechat_draft(article.id, upload_inline_images=False)
+
+    assert article.status == ArticleStatus.draft_created
+    assert article.wx_draft_media_id == "draft_unordered_list_1"
+    assert "<ul" not in captured["content"].lower()
+    assert captured["content"].count("• ") == 3
+    assert captured["content"].count("<code>") == 3
+    assert "task_plan.md" in captured["content"]
+    assert "findings.md" in captured["content"]
+    assert "progress.md" in captured["content"]
+
+
+def test_create_wechat_draft_normalizes_unordered_lists_before_image_block(monkeypatch):
+    import qiao_wechat.services.publisher as publisher_module
+
+    captured: dict[str, str] = {}
+
+    class FakeDraftClient:
+        def __init__(self, session, account):
+            self.session = session
+            self.account = account
+
+        def add_draft(self, articles):
+            captured["content"] = articles[0]["content"]
+            return {"media_id": "draft_unordered_list_image_1"}
+
+    monkeypatch.setattr(publisher_module, "WeChatApiClient", FakeDraftClient)
+
+    db = _session()
+    account = WeChatAccount(
+        name="main",
+        appid="wx_test",
+        raw_secret="secret",
+        default_cover_media_id="cover_media_existing",
+    )
+    db.add(account)
+    db.flush()
+
+    article = Article(
+        account_id=account.id,
+        title="无序列表加图片块",
+        markdown="正文",
+        html=(
+            "<section id='wemd'><p>常见症状：</p>"
+            "<ul><li>做到一半忘了为什么这么做</li><li>查了一堆资料，过两轮对话就丢了</li></ul>"
+            "<div style='margin:18px 0;'><img src='https://mmbiz.qpic.cn/demo.png' width='100%'/></div>"
+            "</section>"
+        ),
+    )
+    db.add(article)
+    db.flush()
+
+    PublishService(db).create_wechat_draft(article.id, upload_inline_images=False)
+
+    assert article.status == ArticleStatus.draft_created
+    assert article.wx_draft_media_id == "draft_unordered_list_image_1"
+    assert "<ul" not in captured["content"].lower()
+    assert captured["content"].count("• ") == 2
+    assert "demo.png" in captured["content"]
+    assert "做到一半忘了为什么这么做" in captured["content"]
+    assert "查了一堆资料，过两轮对话就丢了" in captured["content"]
+
+
 def test_quality_gate_flags_wechat_review_risky_phrases():
     issues = QualityGate().inspect("Claude Agent 协议，为什么它最稳", "这是业界通用最优解，也是更权威的方案。")
 

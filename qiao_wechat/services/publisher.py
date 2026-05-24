@@ -182,6 +182,7 @@ class PublishService:
             self.render_article(article_id, upload_inline_images=upload_inline_images)
             self.session.flush()
             article = self._article(article_id)
+        article.html = self._externalize_inline_svgs(article, account, client, article.html)
         cover_media_id = self._ensure_cover_media_id(article, account, client, force_reupload=force_reupload_cover)
         wx_article = {
             "article_type": "news",
@@ -393,12 +394,15 @@ class PublishService:
 
         original_chars = len(content)
         original_bytes = len(content.encode("utf-8"))
-        optimized = content
+        optimized = self._normalize_wechat_ordered_lists(content)
         applied = False
 
-        if original_chars >= 20_000 or original_bytes >= 1 * 1024 * 1024:
-            candidate = self._compact_wechat_html(content)
-            if len(candidate) < original_chars or len(candidate.encode("utf-8")) < original_bytes:
+        if optimized != content:
+            applied = True
+
+        if len(optimized) >= 20_000 or len(optimized.encode("utf-8")) >= 1 * 1024 * 1024:
+            candidate = self._compact_wechat_html(optimized)
+            if len(candidate) < len(optimized) or len(candidate.encode("utf-8")) < len(optimized.encode("utf-8")):
                 optimized = candidate
                 applied = True
 
@@ -423,9 +427,90 @@ class PublishService:
         summary = "；".join(f"{issue.message} -> {issue.suggestion}" for issue in blocking)
         raise ValueError(f"publish blocked by rendered artifact gate: {summary}")
 
+    def _externalize_inline_svgs(
+        self,
+        article: Article,
+        account: WeChatAccount,
+        client: WeChatApiClient,
+        content: str | None,
+    ) -> str:
+        if not content or "<svg" not in content.lower():
+            return content or ""
+
+        soup = BeautifulSoup(content, "html.parser")
+        svg_nodes = soup.find_all("svg")
+        if not svg_nodes:
+            return content
+
+        exported_dir = self.settings.upload_dir / f"article_{article.id}" / "inline-svg"
+        exported_dir.mkdir(parents=True, exist_ok=True)
+
+        for index, svg in enumerate(svg_nodes, start=1):
+            svg_path = exported_dir / f"inline-svg-{index}.svg"
+            svg_path.write_text(str(svg), encoding="utf-8")
+
+            replacement = soup.new_tag("img")
+            replacement["src"] = self._upload_inline(account, client, str(svg_path))
+            replacement["data-original-src"] = str(svg_path)
+            replacement["alt"] = svg.get("aria-label") or svg.get("alt") or f"inline-svg-{index}"
+
+            style = svg.get("style")
+            if style:
+                replacement["style"] = style
+
+            width = svg.get("width")
+            height = svg.get("height")
+            if width:
+                replacement["width"] = width
+            if height:
+                replacement["height"] = height
+
+            svg.replace_with(replacement)
+
+        return str(soup)
+
     @staticmethod
     def _compact_wechat_html(content: str) -> str:
         return HtmlNormalizer().compact(content)
+
+    @staticmethod
+    def _normalize_wechat_ordered_lists(content: str) -> str:
+        soup = BeautifulSoup(content, "html.parser")
+        changed = False
+
+        list_specs = (
+            ("ol", lambda index: f"{index}、"),
+            ("ul", lambda index: "• "),
+        )
+
+        for list_name, prefix_builder in list_specs:
+            for list_node in soup.find_all(list_name):
+                items = list_node.find_all("li", recursive=False)
+                if not items:
+                    continue
+
+                for index, item in enumerate(items, start=1):
+                    paragraph = soup.new_tag("p")
+                    paragraph["style"] = "margin:6px 0;line-height:1.78;text-indent:0;"
+                    paragraph.append(prefix_builder(index))
+
+                    for child in list(item.contents):
+                        child_name = getattr(child, "name", None)
+                        if child_name in {"p", "div"}:
+                            for nested_child in list(child.contents):
+                                paragraph.append(nested_child.extract())
+                            child.extract()
+                            continue
+                        paragraph.append(child.extract())
+
+                    list_node.insert_before(paragraph)
+
+                list_node.decompose()
+                changed = True
+
+        if not changed:
+            return content
+        return str(soup)
 
     @staticmethod
     def _article_url_from_publish_status(payload: dict[str, Any]) -> str | None:
