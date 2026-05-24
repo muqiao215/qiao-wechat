@@ -489,21 +489,26 @@ class PublishService:
                 if not items:
                     continue
 
+                paragraph = soup.new_tag("p")
                 for index, item in enumerate(items, start=1):
-                    paragraph = soup.new_tag("p")
-                    paragraph["style"] = "margin:6px 0;line-height:1.78;text-indent:0;"
+                    if index > 1:
+                        paragraph.append(soup.new_tag("br"))
                     paragraph.append(prefix_builder(index))
 
                     for child in list(item.contents):
                         child_name = getattr(child, "name", None)
                         if child_name in {"p", "div"}:
+                            first_nested = True
                             for nested_child in list(child.contents):
+                                if not first_nested:
+                                    paragraph.append(soup.new_tag("br"))
                                 paragraph.append(nested_child.extract())
+                                first_nested = False
                             child.extract()
                             continue
                         paragraph.append(child.extract())
 
-                    list_node.insert_before(paragraph)
+                list_node.insert_before(paragraph)
 
                 list_node.decompose()
                 changed = True

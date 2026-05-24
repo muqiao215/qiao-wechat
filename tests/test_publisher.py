@@ -311,6 +311,7 @@ def test_create_wechat_draft_normalizes_ordered_lists_for_wechat(monkeypatch):
     assert "1、" in captured["content"]
     assert "2、" in captured["content"]
     assert "3、" in captured["content"]
+    assert "<br" in captured["content"].lower()
 
 
 def test_create_wechat_draft_normalizes_ordered_list_before_image_block(monkeypatch):
@@ -361,6 +362,7 @@ def test_create_wechat_draft_normalizes_ordered_list_before_image_block(monkeypa
     assert captured["content"].count("1、") == 1
     assert captured["content"].count("2、") == 1
     assert captured["content"].count("3、") == 1
+    assert captured["content"].lower().count("<br") >= 2
     assert "demo.png" in captured["content"]
 
 
@@ -410,6 +412,7 @@ def test_create_wechat_draft_normalizes_unordered_lists_for_wechat(monkeypatch):
     assert "<ul" not in captured["content"].lower()
     assert captured["content"].count("• ") == 3
     assert captured["content"].count("<code>") == 3
+    assert captured["content"].lower().count("<br") >= 2
     assert "task_plan.md" in captured["content"]
     assert "findings.md" in captured["content"]
     assert "progress.md" in captured["content"]
@@ -461,6 +464,7 @@ def test_create_wechat_draft_normalizes_unordered_lists_before_image_block(monke
     assert article.wx_draft_media_id == "draft_unordered_list_image_1"
     assert "<ul" not in captured["content"].lower()
     assert captured["content"].count("• ") == 2
+    assert captured["content"].lower().count("<br") >= 1
     assert "demo.png" in captured["content"]
     assert "做到一半忘了为什么这么做" in captured["content"]
     assert "查了一堆资料，过两轮对话就丢了" in captured["content"]
