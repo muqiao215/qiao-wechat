@@ -13,6 +13,25 @@ Python-only 架构源码：把 wxAiPost 适合借鉴的「后台/发布链路」
 - 排版层单独实现：Markdown -> 微信兼容 inline HTML -> 本地手机宽度预览 -> 草稿。
 - 小红书采用安全导出包，不做绕过登录/风控的自动化。
 
+## 项目边界
+
+`wx-content-mesh-python` 是发布与排版工具，不是这套公众号个人 IP 加工流程的总路由器。
+
+如果你处理的是 `/srv/self-media-exchange/inbox/xueyu-gongzhonghao-receive` 这个同步公众号仓库里的文章，默认流程应当是：
+
+1. 先走 repo-local `skills/wechat-project-workflow/SKILL.md`
+2. 再显式经过 `super-writing`
+3. 再由 `super-writing` 判断这次需要完整
+   `wechat-writer -> wechat-anti-slop -> wechat-format`
+   还是只落到最终包装阶段
+4. 最后才进入本项目执行渲染、图片处理、草稿箱投递
+
+特别注意：
+
+- 对“代表账号风格发出去”的个人 IP 文章，`super-writing` 是必要路由
+- 不要把本项目当成跳过个人 IP 加工流程的捷径
+- 即使最终只是修微信兼容、做格式清理、或进草稿箱，这个结论也应该先经过上游内容 workflow 判断
+
 ## 排版引擎
 
 当前 renderer 已经从“标签级 style dict”切到“主题 CSS 编译成 inline HTML”。
@@ -165,17 +184,15 @@ WCM_ALLOW_WECHAT_PUBLISH=true
 ## 快速开始
 
 ```bash
-uv venv .venv
-source .venv/bin/activate
-uv pip install --python .venv/bin/python -r requirements-dev.txt
+uv sync --extra dev
 cp config.example.env .env
-python -m qiao_wechat.cli init
+uv run qiao-wechat init
 ```
 
 启动后台：
 
 ```bash
-uvicorn qiao_wechat.app:app --reload
+uv run uvicorn qiao_wechat.app:app --reload
 ```
 
 打开：
@@ -187,15 +204,15 @@ http://127.0.0.1:8000/docs
 本地渲染演示：
 
 ```bash
-python examples/demo_local.py
+uv run python examples/demo_local.py
 ```
 
 也可以直接切主题重渲染：
 
 ```bash
-python -m qiao_wechat.cli render 1 --theme default
-python -m qiao_wechat.cli render 1 --theme grace
-python -m qiao_wechat.cli render 1 --theme wemd_card
+uv run qiao-wechat render 1 --theme default
+uv run qiao-wechat render 1 --theme grace
+uv run qiao-wechat render 1 --theme wemd_card
 ```
 
 主题预览画廊：
@@ -255,7 +272,7 @@ curl -X POST http://127.0.0.1:8001/themes/import-file \
 
 ```bash
 export WX_ACCOUNT_MAIN_SECRET="你的 AppSecret"
-python -m qiao_wechat.cli add-account \
+uv run qiao-wechat add-account \
   --name main \
   --appid wx_xxx \
   --secret-env-name WX_ACCOUNT_MAIN_SECRET \
@@ -277,14 +294,14 @@ WCM_ALLOW_WECHAT_PUBLISH=false
 ## 创建文章并预览
 
 ```bash
-python -m qiao_wechat.cli create-article \
+uv run qiao-wechat create-article \
   --account-id 1 \
   --title "wxAiPost 应该怎么借鉴，而不是照搬" \
   --markdown examples/sample_article.md \
   --cover ./cover.jpg \
   --theme wemd_card
 
-python -m qiao_wechat.cli render 1
+uv run qiao-wechat render 1
 ```
 
 图形/公式示例：
@@ -309,15 +326,15 @@ $$
 查看文章、质量检查和发布任务：
 
 ```bash
-python -m qiao_wechat.cli list-articles
-python -m qiao_wechat.cli inspect 1
-python -m qiao_wechat.cli jobs --article-id 1
+uv run qiao-wechat list-articles
+uv run qiao-wechat inspect 1
+uv run qiao-wechat jobs --article-id 1
 ```
 
 ## 创建微信草稿
 
 ```bash
-python -m qiao_wechat.cli draft 1
+uv run qiao-wechat draft 1
 ```
 
 ## 已渲染 HTML 直入草稿
@@ -332,7 +349,7 @@ python -m qiao_wechat.cli draft 1
 CLI 入口：
 
 ```bash
-python -m qiao_wechat.cli html-draft \
+uv run qiao-wechat html-draft \
   --account-id 1 \
   --html /srv/self-media-exchange/inbox/xueyu-gongzhonghao-receive/posts/runtime-governance/final.html \
   --title "多 Agent 运行时治理" \
@@ -367,7 +384,7 @@ POST /wechat/drafts/from-html
 
 ```text
 POST /wechat/drafts/from-html-file
-python -m qiao_wechat.cli html-draft ...
+uv run qiao-wechat html-draft ...
 ```
 
 这三条入口都归到同一条后端发布链路，没有分叉实现。
@@ -375,9 +392,9 @@ python -m qiao_wechat.cli html-draft ...
 ## 发送手机预览
 
 ```bash
-python -m qiao_wechat.cli preview 1 --openid USER_OPENID
+uv run qiao-wechat preview 1 --openid USER_OPENID
 # 或者，在账号允许的情况下：
-python -m qiao_wechat.cli preview 1 --wxname SOME_WECHAT_ID
+uv run qiao-wechat preview 1 --wxname SOME_WECHAT_ID
 ```
 
 注意：不是所有公众号账号都具备 `message/mass/preview` 权限。当前测试用个人主体账号已验证：
@@ -395,14 +412,14 @@ python -m qiao_wechat.cli preview 1 --wxname SOME_WECHAT_ID
 ## 提交发布并轮询
 
 ```bash
-python -m qiao_wechat.cli publish 1
-python -m qiao_wechat.cli poll 1
+uv run qiao-wechat publish 1
+uv run qiao-wechat poll 1
 ```
 
 ## 小红书导出
 
 ```bash
-python -m qiao_wechat.cli xhs-export 1 --tags 公众号排版 内容自动化 Python
+uv run qiao-wechat xhs-export 1 --tags 公众号排版 内容自动化 Python
 ```
 
 ## 最优解建议
@@ -425,7 +442,7 @@ python -m qiao_wechat.cli xhs-export 1 --tags 公众号排版 内容自动化 Py
 ## 本地验证
 
 ```bash
-python examples/demo_local.py
+uv run python examples/demo_local.py
 uv run pytest -q
 ```
 
